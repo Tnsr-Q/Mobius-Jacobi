@@ -6,6 +6,88 @@ except ImportError:
     HAS_VBT = False
     print("Warning: vibetensor not found, using numpy fallback")
 
+
+def compute_causal_covariance(omega: np.ndarray, R_s: np.ndarray,
+                               delta_kk: np.ndarray, J_bound: float,
+                               eta: float = 0.8):
+    """
+    Compute C_Δ eigendecomposition over the causal bound region.
+
+    Replaces simplified geometric rotation with eigendecomposition of the
+    causal deviation covariance matrix.  The resulting projection matrices
+    are aligned to the causal bound B(ω).
+
+    Parameters
+    ----------
+    omega : np.ndarray, shape (M,)
+        Angular frequency array (positive half from FFT).
+    R_s : np.ndarray, shape (M, …)
+        Complex spectral response array; at least one frequency dimension.
+    delta_kk : np.ndarray, shape (M,)
+        Per-frequency causal deviation array.  Values should be of the same
+        order of magnitude as ``J_bound`` for the window mask to be non-empty.
+    J_bound : float
+        Jacobi amplitude bound from microcausality.
+    eta : float
+        Causal-window boundary factor.  The window is
+        ``[eta * J_bound, (2 - eta) * J_bound]``, which is symmetric around
+        ``J_bound``.  With the default ``eta=0.8`` this gives
+        ``[0.8, 1.2] * J_bound``.
+
+    Returns
+    -------
+    P_causal : np.ndarray, shape (d, d)
+        Rank-2 projection matrix onto the dominant causal subspace.
+        Falls back to identity(3) when the bound window is empty.
+    eigvals : np.ndarray, shape (d,)
+        Eigenvalues of C_Δ sorted in descending order.
+    """
+    lo = eta * J_bound
+    hi = (2.0 - eta) * J_bound  # symmetric window around J_bound
+    mask = (delta_kk >= lo) & (delta_kk <= hi)
+
+    if not np.any(mask):
+        return np.eye(3), np.zeros(3)
+
+    # Select rows corresponding to the causal bound window
+    R_window = R_s[mask]
+    weights = delta_kk[mask] / (hi + 1e-30)  # Normalize to (0, 1]
+
+    # Flatten to 2-D real matrix for covariance (use real part of R_s)
+    R_real = R_window.real
+    if R_real.ndim == 1:
+        R_real = R_real[:, np.newaxis]
+    # Collapse any extra dims to single feature vector per frequency
+    R_real = R_real.reshape(R_real.shape[0], -1)
+
+    # Outer-product integral: C_Δ = ∫ w(ω) Δ(ω) Δ†(ω) dω
+    # Approximated as weighted sample covariance
+    if R_real.shape[1] < 2:
+        # Not enough features for covariance — return identity
+        return np.eye(3), np.zeros(3)
+
+    # Use at most 3 features (match default projection rank)
+    n_feat = min(R_real.shape[1], 3)
+    R_feat = R_real[:, :n_feat]
+
+    C_delta = np.cov(R_feat.T, aweights=weights)
+    if C_delta.ndim == 0:
+        C_delta = np.array([[float(C_delta)]])
+
+    # Eigendecomposition — Möbius alignment basis
+    eigvals, eigvecs = np.linalg.eigh(C_delta)
+    idx = np.argsort(eigvals)[::-1]
+    eigvals = eigvals[idx]
+    eigvecs = eigvecs[:, idx]
+
+    # Top-2 projection matrix (rank-2 subspace)
+    d = eigvecs.shape[0]
+    rank = min(2, d)
+    P_causal = eigvecs[:, :rank] @ eigvecs[:, :rank].T
+
+    return P_causal, eigvals
+
+
 class CausalEnforcer:
     def __init__(self, kk_tolerance: float = 0.8, enforce_kk: bool = True):
         self.kk_tolerance = kk_tolerance

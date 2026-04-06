@@ -147,13 +147,15 @@ class CJPTSimulation:
             M_matrix = self._synthetic_transport_matrix(H)
             Omega = self._synthetic_symplectic_matrix()
             
-            # Compute trap door scores
+            # 1. Geometric score → Phase logic & logging
             g_trap_geom = self.cjpt.geometric_trap_score(H, M2, M_matrix, Omega)
-            g_trap_diff = self.cjpt.trap_door_detector(H, M2, M_matrix, Omega)
-            
-            # Determine phase
-            phase = self.cjpt.cjpt_phase_check(g_trap_geom, delta_kk, J_bound, 
+            phase = self.cjpt.cjpt_phase_check(g_trap_geom, delta_kk, J_bound,
                                                sigma_env, self.cjpt.xi_H, H)
+
+            # 2. Smooth score → Gradient flow & reward
+            s_trap = self.cjpt.trap_door_detector(H, M2, M_matrix, Omega)
+            gammas = np.array([8.0 + 0.1 * np.random.randn()])
+            reward = self.cjpt.cjpt_reward(gammas, s_trap, delta_kk, J_bound, sigma_env)
             
             # Build PPO state
             M_eigs = np.linalg.eigvalsh(M_matrix)

@@ -60,16 +60,18 @@ class CJPTSystem:
         """Jacobi amplitude bound from microcausality."""
         return self.kappa_mc * np.sqrt(f2) * (H / self.M_Pl)
     
-    def cjpt_phase_check(self, g_trap: float, delta_kk: float, 
+    def cjpt_phase_check(self, g_trap_geometric: float, delta_kk: float, 
                          J_bound: float, sigma_env: float, 
                          xi_H: float, H: float) -> str:
         """
-        Determine CJPT phase based on trap door and causal deviation.
-        
+        Determine CJPT phase using GEOMETRIC crossing scalar.
+        DO NOT pass smooth trap_door_detector output here.
+
         Parameters
         ----------
-        g_trap : float
-            Geometric trap door score
+        g_trap_geometric : float
+            Geometric trap door score from geometric_trap_score() in [0, inf).
+            Must NOT be the smooth trap_door_detector() score (range [0, 3]).
         delta_kk : float
             Causal deviation
         J_bound : float
@@ -80,27 +82,27 @@ class CJPTSystem:
             Higgs coupling
         H : float
             Hubble parameter
-            
+
         Returns
         -------
         str
             Phase label
         """
-        sigma_crit = self._compute_sigma_crit(g_trap, xi_H, H)
+        sigma_crit = self._compute_sigma_crit(g_trap_geometric, xi_H, H)
         order_param = sigma_env / max(sigma_crit, 1e-12)
-        
-        # Phase boundaries
-        if g_trap < 1.0 and delta_kk < 0.8 * J_bound:
+
+        # Phase boundaries use G_trap (geometric) thresholds: 1.0 and 1.5
+        if g_trap_geometric < 1.0 and delta_kk < 0.8 * J_bound:
             phase = "MINIMAL_PHASE"
-        elif 1.0 <= g_trap <= 1.5 and 0.8*J_bound <= delta_kk <= 1.2*J_bound:
+        elif 1.0 <= g_trap_geometric <= 1.5 and 0.8*J_bound <= delta_kk <= 1.2*J_bound:
             phase = "BOUND_RECONSTRUCTION"
-        elif g_trap > 1.5 and delta_kk > 1.2 * J_bound:
+        elif g_trap_geometric > 1.5 and delta_kk > 1.2 * J_bound:
             phase = "DUAL_EMERGENCE"
         else:
             phase = "TRANSITION"
-        
-        logger.info(f"Phase: {phase} | g_trap={g_trap:.3f} | delta_kk={delta_kk:.3e} | order_param={order_param:.3e}")
-        
+
+        logger.info(f"Phase: {phase} | G_trap={g_trap_geometric:.3f} | Δ_KK={delta_kk:.3e} | σ_param={order_param:.3e}")
+
         self.phase_history.append(phase)
         return phase
     

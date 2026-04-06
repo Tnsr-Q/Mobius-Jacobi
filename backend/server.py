@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import numpy as np
 import json
 import asyncio
-from cjpt_engine import engine
+from cjpt_system import cjpt
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -67,15 +67,20 @@ async def get_status_checks():
 # NEW: CJPT Endpoints
 @api_router.get("/ligo/generate")
 async def generate_ligo_data():
-    """Generate LIGO gravitational wave data"""
-    data = engine.generate_ligo_data()
+    """Generate LIGO gravitational wave data with CJPT"""
+    data = cjpt.generate_ligo_data_full()
     data['timestamp'] = datetime.now(timezone.utc).isoformat()
     return data
 
+@api_router.get("/cjpt/f2scan")
+async def f2_scan():
+    """Run f2 parameter scan"""
+    return cjpt.f2_scan()
+
 @api_router.get("/nanograph/data")
 async def get_nanograph():
-    """Get nanograph data for WebGL visualization"""
-    return engine.generate_nanograph()
+    """Get nanograph data with physics"""
+    return cjpt.generate_nanograph_physics()
 
 @api_router.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):

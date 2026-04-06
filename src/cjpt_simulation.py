@@ -17,11 +17,12 @@ import numpy as np
 import logging
 from pathlib import Path
 
-from causal_enforcer import CausalEnforcer
+from causal_enforcer import CausalEnforcer, compute_causal_covariance
 from tensor_cell import TensorCell
 from cjpt_system import CJPTSystem
 from f2_scanner import F2Scanner
 from visualizer import CJPTVisualizer
+from jacobi_ode_solver import JacobiODESolver
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,6 +59,16 @@ class CJPTSimulation:
         self.scanner = F2Scanner(self.cjpt, self.enforcer, 
                                 output_dir=self.config.get('output_dir', '/app/outputs'))
         self.visualizer = CJPTVisualizer(output_dir=self.config.get('output_dir', '/app/outputs'))
+
+        # Jacobi ODE solver (replaces synthetic strain data)
+        cjpt_cfg = self.config.get('cjpt', {})
+        sim_cfg = self.config.get('simulation', {})
+        self.ode_solver = JacobiODESolver(
+            f2=1e-8,
+            xi_H=cjpt_cfg.get('xi_H', 5e8),
+            H0=sim_cfg.get('H', 1e13),
+            M_Pl=cjpt_cfg.get('M_Pl', 2.435e18),
+        )
         
         # State tracking
         self.state_history = []
@@ -109,42 +120,72 @@ class CJPTSimulation:
         logger.info(f"  M2 = {M2:.3e} GeV")
         logger.info(f"  J_bound = {J_bound:.3e}")
         logger.info(f"  H = {H:.3e} GeV")
-        
-        # Initialize fields (placeholder - real implementation uses ODE solver)
+
+        # Reinitialise ODE solver for this f2 value
+        cjpt_cfg = self.config.get('cjpt', {})
+        ode = JacobiODESolver(
+            f2=f2,
+            xi_H=cjpt_cfg.get('xi_H', 5e8),
+            H0=H,
+            M_Pl=cjpt_cfg.get('M_Pl', 2.435e18),
+        )
+
+        # USR background: mild Hubble modulation + slow-roll decay
+        def background(t):
+            H_t = H * (1.0 + 0.01 * np.sin(t * 0.05))
+            eps = 0.01 * np.exp(-t / 500.0)
+            phi = 1e17
+            return H_t, eps, phi
+
+        # Solve Jacobi ODE once and derive spectral response.
+        # Integration duration: 0.05 s/sample * 100 samples/step * n_steps → 5*n_steps s
+        logger.info("  Solving Jacobi ODE...")
+        t_duration = 5.0 * n_steps  # conformal time units; dt default 0.05
+        t_arr, J_arr = ode.solve((0, t_duration), [1e-8, 1e-8, 0.0, 0.0], background)
+        omega_ode, R_s_ode, sigma_env_base, strain_3d = ode.spectral_response(t_arr, J_arr)
+        logger.info(f"  ODE solved: {len(t_arr)} samples, σ_env={sigma_env_base:.3e}")
+
+        # Causal covariance projection (replaces simplified rotation)
+        delta_kk_arr = np.abs(np.angle(R_s_ode[:, 0])) if R_s_ode.ndim > 1 else np.abs(np.angle(R_s_ode))
+        P_causal, eigs = compute_causal_covariance(omega_ode, R_s_ode, delta_kk_arr, J_bound)
+        logger.info(f"  Causal projection eigenvalues: {eigs}")
+
+        # Field initial conditions
         phi = np.array([1e17, 0.5e17])  # [phi_H, phi_S]
         phi_dot = np.array([1e16, 0.2e16])
         eps = 0.01
         
         for step in range(n_steps):
-            # Generate synthetic strain data for this step
-            strain = self._synthetic_strain_data()
-            comb_mask = np.ones_like(strain)
-            
-            # Process through TensorCell
-            result = self.tensor_cell.solve_physics({
-                'strain': strain,
-                'comb_mask': comb_mask
-            })
-            
-            # Generate synthetic spectral response for causal analysis
-            omega = np.logspace(-2, 2, 500)
-            R_s = self._synthetic_spectral_response(omega, f2, H, M2)
-            
-            # Compute causal deviation
-            delta_kk = self.enforcer.compute_causal_deviation(omega, R_s)
-            
+            # Use ODE-derived spectral response for causal deviation
+            # (use a sliding window over the pre-computed array)
+            idx = min(step, len(omega_ode) - 1)
+            omega_step = omega_ode[:idx + 1] if idx > 0 else omega_ode[:2]
+            R_s_step = R_s_ode[:idx + 1] if idx > 0 else R_s_ode[:2]
+
+            # Compute causal deviation from ODE output
+            delta_kk = self.enforcer.compute_causal_deviation(omega_step, R_s_step[:, 0])
+
             # Update adaptive tolerance
             new_tolerance = self.enforcer.adaptive_tolerance(delta_kk, J_bound, self.cjpt.eta)
             self.enforcer.kk_tolerance = new_tolerance
-            
-            # Compute envelope width (placeholder)
-            sigma_env = 1e-8 * (1 + 0.1 * np.random.randn())
-            
-            # Update causal projection in TensorCell
+
+            # Envelope width from ODE solver (perturbed slightly each step)
+            sigma_env = sigma_env_base * (1 + 0.01 * np.random.randn())
+
+            # Process through TensorCell with ODE-derived strain
+            strain = strain_3d[:1000].T if strain_3d.shape[0] >= 1000 else strain_3d.T
+            comb_mask = np.ones((strain.shape[0], strain.shape[1] if strain.ndim > 1 else 1))
+            result = self.tensor_cell.solve_physics({
+                'strain': strain[:, :, 0] if strain.ndim == 3 else strain,
+                'comb_mask': comb_mask[:, 0] if comb_mask.ndim > 1 else comb_mask
+            })
+
+            # Update causal projection using eigendecomposed C_Δ
             self.tensor_cell.compute_causal_projection(delta_kk, J_bound, self.cjpt.eta)
-            
-            # Build transport and symplectic matrices (placeholder)
-            M_matrix = self._synthetic_transport_matrix(H)
+
+            # Transport and symplectic matrices
+            H_t, eps_t, _ = background(step)
+            M_matrix = ode._transport_matrix(step, H_t, eps_t, 0.0)
             Omega = self._synthetic_symplectic_matrix()
             
             # 1. Geometric score → Phase logic & logging
@@ -167,7 +208,7 @@ class CJPTSimulation:
             if step % 10 == 0:
                 self.cjpt.log_diagnostics(step, phase, g_trap_geom, delta_kk, sigma_env, J_bound)
             
-            # Simple field evolution (placeholder)
+            # Simple field evolution
             phi += phi_dot * 0.1
             phi_dot *= 0.99
         

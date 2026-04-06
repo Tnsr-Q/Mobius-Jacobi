@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Echo Detection - WebGL Visualizer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0a0e27 0%, #1a1a2e 100%);
+            color: #fff;
+            overflow: hidden;
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+        }
+        #canvas-container {
+            flex: 1;
+            position: relative;
+        }
+        #sidebar {
+            width: 300px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            overflow-y: auto;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #4ECDC4;
+        }
+        .stat {
+            margin: 15px 0;
+            padding: 10px;
+            background: rgba(78, 205, 196, 0.1);
+            border-left: 3px solid #4ECDC4;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #aaa;
+            text-transform: uppercase;
+        }
+        .stat-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #4ECDC4;
+        }
+        #status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .streaming {
+            color: #4ECDC4;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            background: #4ECDC4;
+            border: none;
+            color: #0a0e27;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #45b8b0;
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container">
+            <canvas id="webgl-canvas"></canvas>
+            <div id="status">Initializing...</div>
+        </div>
+        <div id="sidebar">
+            <h1>🌊 Echo Detection</h1>
+            
+            <div class="stat">
+                <div class="stat-label">SNR</div>
+                <div class="stat-value" id="snr-value">--</div>
+            </div>
+            
+            <div class="stat">
+                <div class="stat-label">Nodes</div>
+                <div class="stat-value" id="node-count">--</div>
+            </div>
+            
+            <div class="stat">
+                <div class="stat-label">Stream Progress</div>
+                <div class="stat-value" id="progress">0%</div>
+            </div>
+            
+            <button onclick="startStreaming()">Start WebSocket Stream</button>
+            <button onclick="loadStatic()">Load Full Dataset</button>
+            <button onclick="resetView()">Reset Camera</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, nodes = [], edges = [];
+        let nodeGeometry, nodeMaterial, edgeMaterial;
+        let particleSystem, lineSegments;
+        
+        // Initialize Three.js
+        function init() {
+            const canvas = document.getElementById('webgl-canvas');
+            const container = document.getElementById('canvas-container');
+            
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a0e27);
+            
+            // Camera
+            camera = new THREE.PerspectiveCamera(
+                75,
+                container.clientWidth / container.clientHeight,
+                0.1,
+                1000
+            );
+            camera.position.z = 5;
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+            
+            const pointLight = new THREE.PointLight(0x4ECDC4, 1, 100);
+            pointLight.position.set(10, 10, 10);
+            scene.add(pointLight);
+            
+            // Node geometry (reusable)
+            nodeGeometry = new THREE.SphereGeometry(0.02, 16, 16);
+            nodeMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0x4ECDC4,
+                emissive: 0x4ECDC4,
+                emissiveIntensity: 0.5
+            });
+            
+            // Edge material
+            edgeMaterial = new THREE.LineBasicMaterial({ 
+                color: 0x4ECDC4,
+                opacity: 0.3,
+                transparent: true
+            });
+            
+            // Animation loop
+            animate();
+            
+            // Handle resize
+            window.addEventListener('resize', onResize);
+            
+            updateStatus('Ready');
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Rotate scene slowly
+            if (scene.children.length > 2) {
+                scene.rotation.y += 0.001;
+            }
+            
+            renderer.render(scene, camera);
+        }
+        
+        function onResize() {
+            const container = document.getElementById('canvas-container');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+        
+        function updateStatus(message, streaming = false) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = streaming ? 'streaming' : '';
+        }
+        
+        function addNode(nodeData) {
+            const mesh = new THREE.Mesh(nodeGeometry, nodeMaterial);
+            mesh.position.set(nodeData.x, nodeData.y, nodeData.z);
+            scene.add(mesh);
+            nodes.push(mesh);
+        }
+        
+        function addEdge(from, to) {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array([
+                nodes[from].position.x, nodes[from].position.y, nodes[from].position.z,
+                nodes[to].position.x, nodes[to].position.y, nodes[to].position.z
+            ]);
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            const line = new THREE.Line(geometry, edgeMaterial);
+            scene.add(line);
+            edges.push(line);
+        }
+        
+        async function startStreaming() {
+            updateStatus('Connecting to WebSocket...', true);
+            
+            const ws = new WebSocket('ws://localhost:8000/ws/stream');
+            
+            ws.onopen = () => {
+                updateStatus('Streaming data...', true);
+            };
+            
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                
+                if (message.type === 'node_batch') {
+                    message.data.forEach(node => addNode(node));
+                    document.getElementById('progress').textContent = message.progress + '%';
+                    document.getElementById('node-count').textContent = nodes.length;
+                } else if (message.type === 'complete') {
+                    updateStatus('Stream complete!');
+                    loadEdges();
+                }
+            };
+            
+            ws.onerror = () => {
+                updateStatus('WebSocket error!');
+            };
+        }
+        
+        async function loadStatic() {
+            updateStatus('Loading full dataset...');
+            
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+                
+                // Add all nodes
+                data.nodes.forEach(node => addNode(node));
+                
+                // Add all edges
+                data.edges.forEach(edge => {
+                    if (nodes[edge.source] && nodes[edge.target]) {
+                        addEdge(edge.source, edge.target);
+                    }
+                });
+                
+                // Update UI
+                document.getElementById('snr-value').textContent = data.metadata.snr.toExponential(2);
+                document.getElementById('node-count').textContent = nodes.length;
+                document.getElementById('progress').textContent = '100%';
+                
+                updateStatus('Dataset loaded!');
+                
+                // Auto-fit camera
+                fitCamera();
+            } catch (error) {
+                updateStatus('Load failed: ' + error.message);
+            }
+        }
+        
+        function loadEdges() {
+            // Connect consecutive nodes
+            for (let i = 0; i < nodes.length - 1; i++) {
+                addEdge(i, i + 1);
+            }
+        }
+        
+        function resetView() {
+            camera.position.set(0, 0, 5);
+            camera.lookAt(0, 0, 0);
+            scene.rotation.set(0, 0, 0);
+        }
+        
+        function fitCamera() {
+            if (nodes.length === 0) return;
+            
+            const box = new THREE.Box3();
+            nodes.forEach(node => box.expandByObject(node));
+            
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = camera.fov * (Math.PI / 180);
+            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+            cameraZ *= 1.5; // Add margin
+            
+            camera.position.set(center.x, center.y, center.z + cameraZ);
+            camera.lookAt(center);
+        }
+        
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>

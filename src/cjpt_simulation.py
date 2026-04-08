@@ -173,11 +173,14 @@ class CJPTSimulation:
             sigma_env = sigma_env_base * (1 + 0.01 * np.random.randn())
 
             # Process through TensorCell with ODE-derived strain
-            strain = strain_3d[:1000].T if strain_3d.shape[0] >= 1000 else strain_3d.T
-            comb_mask = np.ones((strain.shape[0], strain.shape[1] if strain.ndim > 1 else 1))
+            # Preserve the full ODE time series by reshaping from
+            # (time, batch, channels) -> (batch, channels, time).
+            T = min(1000, strain_3d.shape[0])
+            strain = strain_3d[:T].transpose(1, 2, 0)
+            comb_mask = np.ones((strain.shape[0], strain.shape[2]))
             result = self.tensor_cell.solve_physics({
-                'strain': strain[:, :, 0] if strain.ndim == 3 else strain,
-                'comb_mask': comb_mask[:, 0] if comb_mask.ndim > 1 else comb_mask
+                'strain': strain,
+                'comb_mask': comb_mask
             })
 
             # Update causal projection using eigendecomposed C_Δ

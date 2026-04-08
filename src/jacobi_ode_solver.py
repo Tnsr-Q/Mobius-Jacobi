@@ -138,8 +138,9 @@ class JacobiODESolver:
         -------
         omega : np.ndarray, shape (N//2,)
             Positive angular frequencies.
-        R_s : np.ndarray, shape (N//2,)
-            Complex spectral response (positive-frequency half).
+        R_s : np.ndarray, shape (N//2, 2)
+            Complex spectral response (positive-frequency half), with one
+            column per Jacobi channel.
         sigma_env : float
             Gaussian envelope width.
         strain_3d : np.ndarray, shape (N, 2, 3)

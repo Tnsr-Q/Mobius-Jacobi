@@ -197,6 +197,13 @@ class CJPTSimulation:
             s_trap = self.cjpt.trap_door_detector(H, M2, M_matrix, Omega)
             gammas = np.array([8.0 + 0.1 * np.random.randn()])
             reward = self.cjpt.cjpt_reward(gammas, s_trap, delta_kk, J_bound, sigma_env)
+
+            if not hasattr(self, 'gamma_history'):
+                self.gamma_history = []
+            if not hasattr(self, 'reward_history'):
+                self.reward_history = []
+            self.gamma_history.append(gammas.copy())
+            self.reward_history.append(reward)
             
             # Build PPO state
             M_eigs = np.linalg.eigvalsh(M_matrix)

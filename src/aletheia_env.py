@@ -157,12 +157,12 @@ class AletheiaEnv(gym.Env):
         self.t += 1
         delta_phi, bend = float(action[0]), float(action[1])
 
-        H, eps, phi = self._background(0)
+        H, eps, phi = self._background(self.t)
         H += 1e7 * delta_phi
         eps *= 1.0 + 0.01 * bend
 
-        # Recompute transport matrix and diagnostics
-        M_matrix = self.ode._transport_matrix(0, H, eps, phi)
+        # Recompute transport matrix and diagnostics at the current env time
+        M_matrix = self.ode._transport_matrix(self.t, H, eps, phi)
         M_eigs = np.linalg.eigvalsh(M_matrix)
         J_bound = self.cjpt.compute_J_bound(self.ode.f2, H)
         sigma_env = self._sigma_env * (1.0 + 0.001 * delta_phi)

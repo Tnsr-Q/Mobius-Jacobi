@@ -194,8 +194,8 @@ class AletheiaEnv(gym.Env):
         self._trap_history.append(g_trap)
         self._reward_history.append(reward)
 
-        terminated = bool(g_trap > 1.5 or self.t >= self.max_steps)
-        truncated = False
+        terminated = bool(g_trap > 1.5)
+        truncated = bool(self.t >= self.max_steps and not terminated)
 
         return (
             self.current_state.astype(np.float32),

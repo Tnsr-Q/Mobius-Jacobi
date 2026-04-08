@@ -66,13 +66,22 @@ def compute_causal_covariance(omega: np.ndarray, R_s: np.ndarray,
         # Not enough features for covariance — return identity
         return np.eye(3), np.zeros(3)
 
-    # Use at most 3 features (match default projection rank)
-    n_feat = min(R_real.shape[1], 3)
-    R_feat = R_real[:, :n_feat]
+    # Embed/truncate to a fixed 3-feature causal space so the returned
+    # projection/eigenvalue shapes are consistent across all inputs.
+    target_dim = 3
+    R_feat = np.zeros((R_real.shape[0], target_dim), dtype=R_real.dtype)
+    n_copy = min(R_real.shape[1], target_dim)
+    R_feat[:, :n_copy] = R_real[:, :n_copy]
 
     C_delta = np.cov(R_feat.T, aweights=weights)
     if C_delta.ndim == 0:
         C_delta = np.array([[float(C_delta)]])
+    if C_delta.shape != (target_dim, target_dim):
+        C_padded = np.zeros((target_dim, target_dim), dtype=float)
+        rows = min(C_delta.shape[0], target_dim)
+        cols = min(C_delta.shape[1], target_dim)
+        C_padded[:rows, :cols] = C_delta[:rows, :cols]
+        C_delta = C_padded
 
     # Eigendecomposition — Möbius alignment basis
     eigvals, eigvecs = np.linalg.eigh(C_delta)

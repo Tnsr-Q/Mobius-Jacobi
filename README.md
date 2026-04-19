@@ -64,6 +64,13 @@ python /app/src/cjpt_simulation.py
 jupyter notebook /app/notebooks/cjpt_exploration.ipynb
 ```
 
+### GitHub Pages Notebook
+
+The notebook is published automatically from `main` via GitHub Actions:
+
+- **GitHub Pages URL**: https://tnsr-q.github.io/Mobius-Jacobi/
+- **Workflow**: `.github/workflows/deploy-notebook-pages.yml`
+
 ## 📊 Outputs
 
 All visualizations saved to `/app/outputs/`:
@@ -317,4 +324,3 @@ Research code - See LICENSE
 **Status**: 🎉 **All protocol steps complete and functional!**
 
 For detailed technical documentation, see [`IMPLEMENTATION_SUMMARY.md`](./IMPLEMENTATION_SUMMARY.md).
-

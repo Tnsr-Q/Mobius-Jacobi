@@ -1,0 +1,107 @@
+Rust + GPUI (egui fallback) workspace:
+   •   Download: rust-gpui-app.zip
+
+Initial Workspace layout
+
+rust-gpui-app/
+├─ Cargo.toml               # workspace + shared deps
+├─ README.md
+└─ crates/
+   ├─ data_model/           # TannerConfig, FloquetParams, Snapshot, ControlMsg/Action
+   ├─ floquet_core/         # Propagator trait + Cf4Segment/Trotter2 (τ-aware stubs)
+   ├─ recorders/            # CSV writer (Parquet feature stub via arrow2)
+   ├─ host_ui/              # UI host: egui fallback (default), GPUI feature switch
+   └─ app/                  # binary: channels, engine worker, UI launch
+
+Key features wired
+   •   Tanner variables (TannerConfig { active, tau, nu, alpha, resonance_delta }) threaded through the engine.
+   •   CF4-per-segment stub that simulates τ-modulated bands, invariants, edge weight, Berry-curvature texture.
+   •   Concurrency: mpsc (controls) + watch (last-value snapshots) for stable real-time rendering.
+   •   UI: default egui fallback (compiles anywhere) showing controls + live bands; switchable to GPUI via feature flag.
+   •   Recording scaffold: CSV writer with the canonical long-form schema (extend to Parquet by enabling the parquet feature and filling in writer code).
+
+# 2) Run with egui fallback (recommended first)
+cargo run -p app
+
+# 3) Switch to GPUI (optional, requires Zed’s gpui via git)
+cargo run -p app --no-default-features --features gpui
+
+# 4) Enable Parquet writer plumbing later (arrow2)
+cargo run -p app --features parquet
+
+Where to plug your solver
+   •   Replace the simulated math in crates/floquet_core/src/lib.rs with your real Floquet engine:
+      •   Implement Propagator for Cf4Segment using your CF4 per-segment integrator.
+      •   Populate Snapshot { bands_k, quasienergies, berry_curv, invariants, edge_weight, ... }.
+   •   Keep τ usage local inside the step logic:
+      •   ε_eff(t) = ε0 * (1 + α * sin(2π t / τ))
+      •   Kimi/baseline separation via TannerConfig.active.
+
+Extending the UI (quick wins)
+   •   Add Phase Diagram & BZ Heatmap tabs in host_ui:
+      •   Phase map: maintain a texture buffer; stream tiles via the same watch pattern.
+      •   Heatmap: upload Snapshot.berry_curv into a texture; draw iso-lines.
+   •   Add CSV ingest to host_ui (Right pane):
+      •   Use the csv crate to map (k, ε, band) into the bands buffer for replay.
+   •   Wire recording toggle:
+      •   Create a Recorder in the app main; on ControlAction::Record(true) call open_csv(...),
+then write_snapshot(&snap) on each frame.
+
+Canonical schema (already in the recorder)
+
+metric, mode, cycle_index, time_s, value,
+sweep_param, sweep_value, order, theta, loop_size_pi,
+sweep2_param, sweep2_value
+
+   •   For bands: metric="bands", mode="baseline|kimi", theta=k, value=ε(k).
+   •   For future heatmaps/phase tiles, fill theta/loop_size_pi or the sweep columns as appropriate.
+
+⸻
+
+
+Just say the word and I’ll scaffold those too.
+What I added (plug-and-play)
+1) Phase Map tiling pipeline
+	•	New phase_tile(...) on the Propagator trait (implemented in Cf4Segment):  
+	◦	Produces a tile over (A, Ω) with values in [-1,1] representing an invariant proxy.  
+	◦	Sends tiles to the UI via a shared DataBus (see below).  
+2) Unified data bus (frames + tiles)
+	•	data_model now defines:  
+	◦	enum DataBus { Frame(Snapshot), Phase(PhaseTile) }  
+	◦	UI subscribes once and can render live bands and phase-map tiles.  
+3) CSV ingest overlay (Bands tab)
+	•	In host_ui (egui fallback), Right pane includes a CSV loader:  
+	◦	Paste a path, click Load CSV, and it overlays (k, ε) points on the Bands plot.  
+	◦	Reads the canonical long-form schema you’ve been using (pulls theta and value columns).  
+4) GPUI host scaffold
+	•	Feature-gated gpui_host::run(...) added (minimal stub so the crate structure is ready).  
+	•	Keep building with egui by default; enable GPUI later:  
+cargo run -p app --no-default-features --features gpui
+5) App wiring
+	•	app now publishes both:  
+	◦	live frames at ~60 Hz (DataBus::Frame)  
+	◦	on-demand phase tiles when you click “Phase Map” (DataBus::Phase)  
+	•	Controls also include Run / Pause / Reset / Rebuild / Phase Map.  
+
+
+
+Where to plug your real math
+	•	Replace the toy math in:  
+	◦	crates/floquet_core/src/lib.rs::Cf4Segment::step  
+	◦	crates/floquet_core/src/lib.rs::Propagator::phase_tile  
+	•	Keep τ-threading via TannerConfig (already passed into both).  
+
+
+
+Build & run
+unzip rust-gpui-app.zip && cd rust-gpui-app
+
+# Default (egui fallback):
+cargo run -p app
+
+# Optional: try GPUI later (requires Zed’s gpui via git):
+cargo run -p app --no-default-features --features gpui
+
+
+
+

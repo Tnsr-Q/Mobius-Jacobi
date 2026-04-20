@@ -60,8 +60,8 @@ class CJPTSystem:
         """Jacobi amplitude bound from microcausality."""
         return self.kappa_mc * np.sqrt(f2) * (H / self.M_Pl)
     
-    def cjpt_phase_check(self, g_trap_geometric: float, delta_kk: float, 
-                         J_bound: float, sigma_env: float, 
+    def cjpt_phase_check(self, g_trap_geometric: float, delta_kk: float,
+                         J_bound: float, sigma_env: float,
                          xi_H: float, H: float) -> str:
         """
         Determine CJPT phase using GEOMETRIC crossing scalar.
@@ -70,7 +70,8 @@ class CJPTSystem:
         Parameters
         ----------
         g_trap_geometric : float
-            Geometric trap door score from geometric_trap_score() in [0, inf).
+            Geometric trap door score from geometric_trap_score() in [0, ∞).
+            Thresholds 1.0 and 1.5 are defined for this metric (Rule 2).
             Must NOT be the smooth trap_door_detector() score (range [0, 3]).
         delta_kk : float
             Causal deviation
@@ -106,15 +107,19 @@ class CJPTSystem:
         self.phase_history.append(phase)
         return phase
     
-    def _compute_sigma_crit(self, g_trap: float, xi_H: float, H: float) -> float:
+    def _compute_sigma_crit(self, g_trap_geometric: float, xi_H: float, H: float) -> float:
         """Critical Gaussian envelope width."""
-        return (1.0 / max(g_trap, 1e-6)) * np.sqrt(self.M_Pl**2 / (xi_H * H**2))
+        return (1.0 / max(g_trap_geometric, 1e-6)) * np.sqrt(self.M_Pl**2 / (xi_H * H**2))
     
-    def trap_door_detector(self, H: float, M2: float, M_matrix: np.ndarray, 
+    def trap_door_detector(self, H: float, M2: float, M_matrix: np.ndarray,
                           Omega: np.ndarray, kappa: Tuple[float, float, float] = (50, 30, 40)) -> float:
         """
-        Differentiable trap door score.
-        
+        Smooth (differentiable) trap door score for gradient flow and rewards.
+
+        Returns the sum of three sigmoid veto terms in [0, 3].
+        Use this score for PPO rewards and gradient-based updates only.
+        DO NOT pass this score to cjpt_phase_check — use geometric_trap_score instead.
+
         Parameters
         ----------
         H : float
@@ -127,11 +132,11 @@ class CJPTSystem:
             Symplectic matrix
         kappa : tuple
             Sensitivity parameters
-            
+
         Returns
         -------
         float
-            Trap door score in [0, 3]
+            Smooth trap door score in [0, 3]
         """
         # 1. Ghost unitarity bound
         ghost_ratio = H / M2
@@ -147,38 +152,42 @@ class CJPTSystem:
         symplectic_veto = 1.0 / (1.0 + np.exp(-kappa[2] * (symp_drift - self.config['delta_symp'])))
         
         total = ghost_veto + tachyon_veto + symplectic_veto
-        self.g_trap_history.append(total)
         return total
     
-    def geometric_trap_score(self, H: float, M2: float, M_matrix: np.ndarray, 
+    def geometric_trap_score(self, H: float, M2: float, M_matrix: np.ndarray,
                             Omega: np.ndarray) -> float:
         """
         Geometric crossing scalar (interpretability metric).
-        
+
         Returns max ratio of actual to threshold values.
+        Range: [0, ∞). Use for phase logic and thresholds (Rule 2).
+        DO NOT use this score for gradient flow or rewards — use trap_door_detector instead.
         """
         ratio_ghost = (H / M2) / self.config['epsilon_H']
         lambda_min = np.min(np.linalg.eigvalsh(M_matrix))
         Lambda_crit = self.config['Lambda_crit_factor'] * H**2
         ratio_tachyon = (-lambda_min) / Lambda_crit if lambda_min < 0 else 0.0
-        
+
         symp_drift = np.abs(np.log(np.linalg.det(Omega)))
         ratio_symp = symp_drift / self.config['delta_symp']
-        
-        return max(ratio_ghost, ratio_tachyon, ratio_symp)
+
+        g_trap_geometric = max(ratio_ghost, ratio_tachyon, ratio_symp)
+        self.g_trap_history.append(g_trap_geometric)
+        return g_trap_geometric
     
-    def cjpt_reward(self, gammas: np.ndarray, trap_score: float, 
+    def cjpt_reward(self, gammas: np.ndarray, trap_score: float,
                    delta_kk: float, J_bound: float, sigma_env: float,
                    gamma_target: float = 8.1, alpha_trap: float = 0.5) -> float:
         """
         PPO reward with CJPT phase transition shaping.
-        
+
         Parameters
         ----------
         gammas : np.ndarray
             Floquet eigenvalue trajectory
         trap_score : float
-            Differentiable trap door score
+            Smooth trap door score from trap_door_detector() in [0, 3].
+            DO NOT pass geometric_trap_score output here.
         delta_kk : float
             Causal deviation
         J_bound : float
@@ -189,7 +198,7 @@ class CJPTSystem:
             Target Floquet eigenvalue
         alpha_trap : float
             Trap penalty weight
-            
+
         Returns
         -------
         float

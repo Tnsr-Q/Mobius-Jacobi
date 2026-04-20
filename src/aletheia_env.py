@@ -103,10 +103,14 @@ class AletheiaEnv(gym.Env):
             phi = 1e17 + delta_phi * 1e16
             return H, eps, phi
 
-        # Initial Jacobi conditions perturbed by action
-        y0 = [1e-8, 1e-8 + float(action[0]), 0.0, 0.0]
+        # Initial Jacobi conditions perturbed by action.
+        # action[0] is in [-0.1, 0.1]; scale to the baseline amplitude (1e-8)
+        # so the perturbation is in the same order of magnitude as the IC.
+        y0 = [1e-8, 1e-8 + float(action[0]) * 1e-8, 0.0, 0.0]
 
-        t, J = self.ode.solve((0, 500), y0, background)
+        # Shortened ODE span (100 time units) for efficient per-episode resets.
+        # The spectral response is well-formed with ~2000 samples at dt=0.05.
+        t, J = self.ode.solve((0, 100), y0, background)
         omega, R_s, sigma_env, strain_3d = self.ode.spectral_response(t, J)
 
         self._omega = omega
@@ -125,7 +129,7 @@ class AletheiaEnv(gym.Env):
         # CausalEnforcer.compute_causal_deviation() once a full rollout is wired.
         delta_kk = 0.05 * J_bound
 
-        M_matrix = self.ode._transport_matrix(0, H_t, eps_t, 0.0)
+        M_matrix = self.ode._transport_matrix(0, H_t, eps_t)
         M_eigs = np.linalg.eigvalsh(M_matrix)
         Omega = np.eye(4)  # Placeholder symplectic; replace with Magnus integrator
 
@@ -162,7 +166,7 @@ class AletheiaEnv(gym.Env):
         eps *= 1.0 + 0.01 * bend
 
         # Recompute transport matrix and diagnostics at the current env time
-        M_matrix = self.ode._transport_matrix(self.t, H, eps, phi)
+        M_matrix = self.ode._transport_matrix(self.t, H, eps)
         M_eigs = np.linalg.eigvalsh(M_matrix)
         J_bound = self.cjpt.compute_J_bound(self.ode.f2, H)
         sigma_env = self._sigma_env * (1.0 + 0.001 * delta_phi)

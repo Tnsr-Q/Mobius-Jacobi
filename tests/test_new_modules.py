@@ -71,7 +71,7 @@ class TestJacobiODESolver:
         assert len(t) >= 4, "ODE solver must return ≥4 samples"
 
     def test_transport_matrix_symmetric(self, ode_solver):
-        M = ode_solver._transport_matrix(0, H0, 1e-3, 1e17)
+        M = ode_solver._transport_matrix(0, H0, 1e-3)
         assert M.shape == (2, 2)
         np.testing.assert_allclose(M, M.T, rtol=1e-10)
 

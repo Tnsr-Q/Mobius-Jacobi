@@ -60,18 +60,10 @@ class CJPTSimulation:
                                 output_dir=self.config.get('output_dir', '/app/outputs'))
         self.visualizer = CJPTVisualizer(output_dir=self.config.get('output_dir', '/app/outputs'))
 
-        # Jacobi ODE solver (replaces synthetic strain data)
-        cjpt_cfg = self.config.get('cjpt', {})
-        sim_cfg = self.config.get('simulation', {})
-        self.ode_solver = JacobiODESolver(
-            f2=1e-8,
-            xi_H=cjpt_cfg.get('xi_H', 5e8),
-            H0=sim_cfg.get('H', 1e13),
-            M_Pl=cjpt_cfg.get('M_Pl', 2.435e18),
-        )
-        
         # State tracking
         self.state_history = []
+        self.gamma_history = []
+        self.reward_history = []
         
         logger.info("CJPT system initialized successfully.")
     
@@ -147,7 +139,7 @@ class CJPTSimulation:
 
         # Causal covariance projection (replaces simplified rotation)
         delta_kk_arr = np.abs(np.angle(R_s_ode[:, 0])) if R_s_ode.ndim > 1 else np.abs(np.angle(R_s_ode))
-        P_causal, eigs = compute_causal_covariance(omega_ode, R_s_ode, delta_kk_arr, J_bound)
+        _P_causal, eigs = compute_causal_covariance(omega_ode, R_s_ode, delta_kk_arr, J_bound)
         logger.info(f"  Causal projection eigenvalues: {eigs}")
 
         # Field initial conditions
@@ -183,12 +175,13 @@ class CJPTSimulation:
                 'comb_mask': comb_mask
             })
 
-            # Update causal projection using eigendecomposed C_Δ
+            # Update causal projection (rotation-based placeholder; eigendecomposition
+            # from compute_causal_covariance is pre-computed in _P_causal above)
             self.tensor_cell.compute_causal_projection(delta_kk, J_bound, self.cjpt.eta)
 
             # Transport and symplectic matrices
             H_t, eps_t, _ = background(step)
-            M_matrix = ode._transport_matrix(step, H_t, eps_t, 0.0)
+            M_matrix = ode._transport_matrix(step, H_t, eps_t)
             Omega = self._synthetic_symplectic_matrix()
             
             # 1. Geometric score → Phase logic & logging
@@ -201,10 +194,6 @@ class CJPTSimulation:
             gammas = np.array([8.0 + 0.1 * np.random.randn()])
             reward = self.cjpt.cjpt_reward(gammas, s_trap, delta_kk, J_bound, sigma_env)
 
-            if not hasattr(self, 'gamma_history'):
-                self.gamma_history = []
-            if not hasattr(self, 'reward_history'):
-                self.reward_history = []
             self.gamma_history.append(gammas.copy())
             self.reward_history.append(reward)
             

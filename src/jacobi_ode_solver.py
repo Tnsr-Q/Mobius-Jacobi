@@ -10,7 +10,7 @@ Gaussian envelope width σ_env.
 
 import numpy as np
 from scipy.integrate import solve_ivp
-from scipy.fft import fft, fftfreq
+from scipy.fft import fftfreq
 
 
 class JacobiODESolver:
@@ -35,8 +35,7 @@ class JacobiODESolver:
         self.H0 = H0
         self.M_Pl = M_Pl
 
-    def _transport_matrix(self, t: float, H_t: float, eps_t: float,
-                          phi_t: float) -> np.ndarray:
+    def _transport_matrix(self, t: float, H_t: float, eps_t: float) -> np.ndarray:
         """
         Construct M(t) from local curvature and RGE portal coupling.
 
@@ -48,8 +47,6 @@ class JacobiODESolver:
             Hubble parameter at time t.
         eps_t : float
             Slow-roll parameter at time t.
-        phi_t : float
-            Inflaton field value at time t.
 
         Returns
         -------
@@ -98,8 +95,8 @@ class JacobiODESolver:
         def ode(t, y):
             J = y[:2]
             dJ = y[2:]
-            H_t, eps_t, phi_t = background_func(t)
-            M = self._transport_matrix(t, H_t, eps_t, phi_t)
+            H_t, eps_t, _ = background_func(t)
+            M = self._transport_matrix(t, H_t, eps_t)
             d2J = -M @ J
             return np.concatenate([dJ, d2J])
 
@@ -112,7 +109,7 @@ class JacobiODESolver:
             # Integration failed (e.g. overflow in stiff portal term).
             # Return a minimal oscillatory trajectory at the initial background.
             H_0, eps_0, _ = background_func(t_span[0])
-            M_0 = self._transport_matrix(t_span[0], H_0, eps_0, 0.0)
+            M_0 = self._transport_matrix(t_span[0], H_0, eps_0)
             # Use diagonal element as characteristic frequency
             omega_0 = np.sqrt(np.abs(np.diag(M_0)).mean() + 1e-30)
             t_fallback = t_eval if len(t_eval) >= 4 else np.linspace(t_span[0], t_span[1], 100)

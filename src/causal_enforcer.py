@@ -51,7 +51,9 @@ def compute_causal_covariance(omega: np.ndarray, R_s: np.ndarray,
 
     # Select rows corresponding to the causal bound window
     R_window = R_s[mask]
-    weights = delta_kk[mask] / (hi + 1e-30)  # Normalize to (0, 1]
+    # Incorporate frequency spacing (dω) to approximate ∫ w(ω) dω correctly.
+    d_omega = np.abs(np.gradient(omega))
+    weights = delta_kk[mask] / (hi + 1e-30) * d_omega[mask]  # Normalize × dω
 
     # Flatten to 2-D real matrix for covariance (use real part of R_s)
     R_real = R_window.real
@@ -62,6 +64,9 @@ def compute_causal_covariance(omega: np.ndarray, R_s: np.ndarray,
 
     # Outer-product integral: C_Δ = ∫ w(ω) Δ(ω) Δ†(ω) dω
     # Approximated as weighted sample covariance
+    if R_real.shape[0] < 2:
+        # Not enough samples for covariance (np.cov normalises by N-1) — return identity
+        return np.eye(3), np.zeros(3)
     if R_real.shape[1] < 2:
         # Not enough features for covariance — return identity
         return np.eye(3), np.zeros(3)

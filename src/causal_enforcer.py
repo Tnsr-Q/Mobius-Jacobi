@@ -6,6 +6,102 @@ except ImportError:
     HAS_VBT = False
     print("Warning: vibetensor not found, using numpy fallback")
 
+
+def compute_causal_covariance(omega: np.ndarray, R_s: np.ndarray,
+                               delta_kk: np.ndarray, J_bound: float,
+                               eta: float = 0.8):
+    """
+    Compute C_Δ eigendecomposition over the causal bound region.
+
+    Replaces simplified geometric rotation with eigendecomposition of the
+    causal deviation covariance matrix.  The resulting projection matrices
+    are aligned to the causal bound B(ω).
+
+    Parameters
+    ----------
+    omega : np.ndarray, shape (M,)
+        Angular frequency array (positive half from FFT).
+    R_s : np.ndarray, shape (M, …)
+        Complex spectral response array; at least one frequency dimension.
+    delta_kk : np.ndarray, shape (M,)
+        Per-frequency causal deviation array.  Values should be of the same
+        order of magnitude as ``J_bound`` for the window mask to be non-empty.
+    J_bound : float
+        Jacobi amplitude bound from microcausality.
+    eta : float
+        Causal-window boundary factor.  The window is
+        ``[eta * J_bound, (2 - eta) * J_bound]``, which is symmetric around
+        ``J_bound``.  With the default ``eta=0.8`` this gives
+        ``[0.8, 1.2] * J_bound``.
+
+    Returns
+    -------
+    P_causal : np.ndarray, shape (d, d)
+        Rank-2 projection matrix onto the dominant causal subspace.
+        Falls back to identity(3) when the bound window is empty.
+    eigvals : np.ndarray, shape (d,)
+        Eigenvalues of C_Δ sorted in descending order.
+    """
+    lo = eta * J_bound
+    hi = (2.0 - eta) * J_bound  # symmetric window around J_bound
+    mask = (delta_kk >= lo) & (delta_kk <= hi)
+
+    if not np.any(mask):
+        return np.eye(3), np.zeros(3)
+
+    # Select rows corresponding to the causal bound window
+    R_window = R_s[mask]
+    # Incorporate frequency spacing (dω) to approximate ∫ w(ω) dω correctly.
+    d_omega = np.abs(np.gradient(omega))
+    weights = delta_kk[mask] / (hi + 1e-30) * d_omega[mask]  # Normalize × dω
+
+    # Flatten to 2-D real matrix for covariance (use real part of R_s)
+    R_real = R_window.real
+    if R_real.ndim == 1:
+        R_real = R_real[:, np.newaxis]
+    # Collapse any extra dims to single feature vector per frequency
+    R_real = R_real.reshape(R_real.shape[0], -1)
+
+    # Outer-product integral: C_Δ = ∫ w(ω) Δ(ω) Δ†(ω) dω
+    # Approximated as weighted sample covariance
+    if R_real.shape[0] < 2:
+        # Not enough samples for covariance (np.cov normalises by N-1) — return identity
+        return np.eye(3), np.zeros(3)
+    if R_real.shape[1] < 2:
+        # Not enough features for covariance — return identity
+        return np.eye(3), np.zeros(3)
+
+    # Embed/truncate to a fixed 3-feature causal space so the returned
+    # projection/eigenvalue shapes are consistent across all inputs.
+    target_dim = 3
+    R_feat = np.zeros((R_real.shape[0], target_dim), dtype=R_real.dtype)
+    n_copy = min(R_real.shape[1], target_dim)
+    R_feat[:, :n_copy] = R_real[:, :n_copy]
+
+    C_delta = np.cov(R_feat.T, aweights=weights)
+    if C_delta.ndim == 0:
+        C_delta = np.array([[float(C_delta)]])
+    if C_delta.shape != (target_dim, target_dim):
+        C_padded = np.zeros((target_dim, target_dim), dtype=float)
+        rows = min(C_delta.shape[0], target_dim)
+        cols = min(C_delta.shape[1], target_dim)
+        C_padded[:rows, :cols] = C_delta[:rows, :cols]
+        C_delta = C_padded
+
+    # Eigendecomposition — Möbius alignment basis
+    eigvals, eigvecs = np.linalg.eigh(C_delta)
+    idx = np.argsort(eigvals)[::-1]
+    eigvals = eigvals[idx]
+    eigvecs = eigvecs[:, idx]
+
+    # Top-2 projection matrix (rank-2 subspace)
+    d = eigvecs.shape[0]
+    rank = min(2, d)
+    P_causal = eigvecs[:, :rank] @ eigvecs[:, :rank].T
+
+    return P_causal, eigvals
+
+
 class CausalEnforcer:
     def __init__(self, kk_tolerance: float = 0.8, enforce_kk: bool = True):
         self.kk_tolerance = kk_tolerance

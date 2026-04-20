@@ -72,6 +72,7 @@ class CJPTSystem:
         g_trap_geometric : float
             Geometric trap door score from geometric_trap_score() in [0, ∞).
             Thresholds 1.0 and 1.5 are defined for this metric (Rule 2).
+            Must NOT be the smooth trap_door_detector() score (range [0, 3]).
         delta_kk : float
             Causal deviation
         J_bound : float
@@ -91,6 +92,7 @@ class CJPTSystem:
         sigma_crit = self._compute_sigma_crit(g_trap_geometric, xi_H, H)
         order_param = sigma_env / max(sigma_crit, 1e-12)
 
+        # Phase boundaries use G_trap (geometric) thresholds: 1.0 and 1.5
         if g_trap_geometric < 1.0 and delta_kk < 0.8 * J_bound:
             phase = "MINIMAL_PHASE"
         elif 1.0 <= g_trap_geometric <= 1.5 and 0.8*J_bound <= delta_kk <= 1.2*J_bound:

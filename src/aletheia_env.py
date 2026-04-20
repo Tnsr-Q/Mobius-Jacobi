@@ -175,7 +175,8 @@ class AletheiaEnv(gym.Env):
         g_trap = self.cjpt.geometric_trap_score(H, self.ode.M2, M_matrix, Omega)
         s_trap = self.cjpt.trap_door_detector(H, self.ode.M2, M_matrix, Omega)
         phase = self.cjpt.cjpt_phase_check(
-            g_trap, delta_kk, J_bound, sigma_env, self.ode.xi_H, H
+            g_trap_geometric=g_trap, delta_kk=delta_kk, J_bound=J_bound,
+            sigma_env=sigma_env, xi_H=self.ode.xi_H, H=H
         )
 
         # Reward: single Floquet track placeholder
